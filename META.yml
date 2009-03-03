@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Video-FrameGrab
-version:             0.01
+version:             0.02
 abstract:            Grab a frame from a video
 license:             ~
 generated_by:        ExtUtils::MakeMaker version 6.31
