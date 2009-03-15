@@ -1,12 +1,15 @@
 --- #YAML:1.0
 name:                Video-FrameGrab
-version:             0.02
-abstract:            Grab a frame from a video
+version:             0.03
+abstract:            Grab a frame or metadata from a video
 license:             ~
 generated_by:        ExtUtils::MakeMaker version 6.31
 distribution_type:   module
 requires:     
+    DateTime:                      0.47
+    DateTime::Format::Duration:    1.03
     File::Temp:                    
+    Log::Log4perl:                 1.0
     Sysadm::Install:               0.17
 meta-spec:
     url:     http://module-build.sourceforge.net/META-spec-v1.2.html
