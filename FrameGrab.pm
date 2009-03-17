@@ -12,7 +12,7 @@ use DateTime::Format::Duration;
 
 use Log::Log4perl qw(:easy);
 
-our $VERSION = "0.03";
+our $VERSION = "0.04";
 
 ###########################################
 sub new {
@@ -62,6 +62,7 @@ sub frame_grab {
     my($stdout, $stderr, $rc) = 
         tap $self->{mplayer}, qw(-frames 1 -ss), $time, 
             "-vo", "jpeg:maxfiles=1:outdir=$self->{tmpdir}",
+            "-ao", "null",
             $self->{video};
 
     if($rc != 0) {
@@ -78,6 +79,89 @@ sub frame_grab {
 
     $self->{jpeg} = slurp("$self->{tmpdir}/00000001.jpg");
     return $self->{jpeg}
+}
+
+###########################################
+sub cropdetect {
+###########################################
+    my($self, $time) = @_;
+
+    if(!defined $time) {
+        LOGDIE "Missing parameter: time";
+    }
+
+    my($stdout, $stderr, $rc) = 
+        tap $self->{mplayer}, qw(-vf cropdetect -ss), $time, 
+            "-frames", 10,
+            "-vo", "null",
+            "-ao", "null",
+            $self->{video};
+
+    if(defined $stdout and
+       $stdout =~ /-vf crop=(\d+):(\d+):(\d+):(\d+)/) {
+        DEBUG "Suggested crop: $1, $2, $3, $4";
+        return ($1, $2, $3, $4);
+    }
+
+    ERROR "$stderr";
+
+    return undef;
+}
+
+###########################################
+sub cropdetect_average {
+###########################################
+    my($self, $nof_probes, $movie_length) = @_;
+
+    $self->result_clear();
+
+    for my $probe ( 
+          $self->equidistant_snap_times( $nof_probes, $movie_length ) ) {
+        my @params = $self->cropdetect( $probe );
+        if(! defined $params[0] ) {
+            ERROR "cropdetect returned an error";
+            next;
+        }
+        DEBUG "Cropdetect at $probe yielded (@params)";
+        $self->result_push( @params );
+    }
+
+    my @result = $self->result_majority_decision();
+    DEBUG "Majority decision: (@result)";
+    return @result;
+}
+
+###########################################
+sub result_clear  {
+###########################################
+    my($self) = @_;
+
+    $self->{result} = [];
+}
+
+###########################################
+sub result_push {
+###########################################
+    my($self, @result) = @_;
+
+    for(0..$#result) {
+        $self->{result}->[$_]->{ $result[$_] }++;
+    }
+}
+
+###########################################
+sub result_majority_decision {
+###########################################
+    my($self) = @_;
+
+    my @result = ();
+
+    for my $sample (@{ $self->{result} }) {
+        my($majority) = sort { $sample->{$b} <=> $sample->{$a} } keys %$sample;
+        push @result, $majority;
+    }
+
+    return @result;
 }
 
 ###########################################
@@ -122,7 +206,7 @@ sub meta_data {
 ###########################################
 sub equidistant_snap_times {
 ###########################################
-    my($self, $nof_snaps) = @_;
+    my($self, $nof_snaps, $movie_length) = @_;
 
     if(! defined $nof_snaps) {
         LOGDIE "Parameter missing: nof_snaps";
@@ -134,7 +218,10 @@ sub equidistant_snap_times {
         $self->meta_data();
     }
 
-    my $interval = $self->{meta}->{length} / ($nof_snaps + 1.0);
+    my $length = $self->{meta}->{length};
+    $length = $movie_length if defined $movie_length;
+
+    my $interval = $length / ($nof_snaps + 1.0);
     my $interval_seconds     = int( $interval );
 
     my $dur   = DateTime::Duration->new(seconds => $interval_seconds);
@@ -225,7 +312,7 @@ containing something like
     audio_nch        => 2
     length           => 9515.94
 
-=item equidistant_snap_times( $howmany )
+=item equidistant_snap_times( $howmany, [$movie_length] )
 
 If you want to snap N frames at constant intervals throughout the movie,
 use equidistant_snap_times( $n ) to get a list of timestamps you can use
@@ -238,7 +325,32 @@ equidistant_snap_times( 5 ) will return
     01:20:00
     01:40:00
 
-as a list of strings. 
+as a list of strings. The movie length is determined by a call to meta
+data, but some formats don't allow retrieving the movie length that way,
+therefore the optional parameter $movie_length lets you specify the
+length of the movie (or the length of the overall interval to perform
+the snapshots in) in seconds.
+
+=item cropdetect( $time )
+
+Asks mplayer to come up with a recommendation on how to crop the video.
+If this is a 16:9 movie converted to 4:3 format, the black bars at the bottom
+and the top of the screen should be cropped out and C<cropdetect> will
+return a list of ($width, $height, $x, $y) to be passed to mplayer/mencoder
+in the form C<-vf crop=w:h:x:y> to accomplish the suggested cropping.
+
+Note that this is just a guess and might be incorrect at times, but
+if you repeat it at several times during the movie (e.g. by using
+the equidistant_snap_times method described above), the result
+is fairly accurate. C<cropdetect_average>, described below, does exactly 
+that.
+
+=item cropdetect_average( $number_of_probes, [$movie_length] )
+
+Takes C<$number_of_probes> from the movie at equidistant intervals,
+runs C<cropdetect> on them and returns a result computed by 
+majority decision over all probes (ties are broken randomly).
+See C<equidistant_snap_times> for the optional C<$movie_length> parameter.
 
 =head1 CAVEATS
 
